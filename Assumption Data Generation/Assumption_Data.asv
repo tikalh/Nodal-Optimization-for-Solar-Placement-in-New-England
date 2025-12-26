@@ -1,0 +1,134 @@
+function load_scenarios = generate_load_scenarios(mpc)
+%GENERATE_LOAD_SCENARIOS Generate hourly load scenarios for 1 year.
+%
+% OUTPUT FORMAT:
+%   load_scenarios is a matrix:
+%
+%       (Nodes × Hours)
+%
+%   where:
+%       - Hours = 8760 (24*365)
+%       - load_scenarios(i, h) is the load at bus i during hour h
+%       - Each hour is a *scenario*
+%
+% INPUTS:
+%   mpc   MATPOWER case struct (must contain mpc.bus)
+%
+% METHOD:
+%   - Uses base loads (P_base)
+%   - Replaces zeros with random noise
+%   - Creates seasonal and daily patterns
+%   - Adds small noise per bus
+
+
+rng(42);  % Repeatable random generator
+
+Nodes = size(mpc.bus, 1);
+Hours = 24 * 365;
+
+% --- 1. Base Loads -------------------------------------------------
+P_base = mpc.bus(:, 3);
+
+% Replace zero loads with random pseudo-loads
+P_base(P_base == 0) = 50 + 20 * randn(sum(P_base == 0), 1);
+
+% --- 2. Time setup -------------------------------------------------
+t = (1:Hours)';
+day_idx  = ceil(t / 24);
+hour_idx = mod(t - 1, 24);
+
+% Seasonal curve
+season = 1 + 0.2 * cos(2 * pi * (day_idx - 200) / 365);
+
+% Daily curve
+daily = 0.6 + 0.3 * exp(-((hour_idx - 9 ).^2) / 10) + ...
+              0.4 * exp(-((hour_idx - 19).^2) / 10);
+
+% --- 3. Final load scenario matrix --------------------------------
+load_scenarios = zeros(Nodes, Hours);
+
+for i = 1:Nodes
+    noise = 1 + 0.02 * randn(Hours, 1);  % 2% random    
+    load_scenarios(i, :) = (P_base(i) .* season .* daily .* noise).';
+end
+
+end
+ 
+
+function Solar_Max_Matrix = solarmaxestimates() 
+% SOLARMAXESTIMATES Estimate max hourly solar availability per node
+%
+% OUTPUT FORMAT:
+%   Solar_Max_Matrix is:
+%
+%       (Hours × Nodes)
+%
+%   - Solar_Max_Matrix(h, i) gives the *maximum possible solar MW*
+%     for node i at hour h of the year.
+%
+% METHOD:
+%   - Randomly assigns each node a max solar capacity limit
+%   - Builds a seasonal + daily irradiance pattern
+%   - Multiplies time profile ⊗ node max capacity
+
+rng(42) 
+
+% --- 1. SETUP --- 
+
+Num_Nodes = 39; 
+
+Hours = 24*365; 
+
+% --- 2. DEFINE SPACE LIMITS (Location Dependent) --- 
+
+% max MW if the node's area was fully utilized. 
+
+min_space_mw = 10; 
+
+max_space_mw = 500; 
+
+% Vector of Max Capacities for the 39 nodes (1 x 39) 
+
+node_space_limits = min_space_mw + (max_space_mw - min_space_mw) * rand(1, Num_Nodes); 
+
+% --- 3. DEFINE TIME PROFILE (Time Dependent) --- 
+
+% Normalized 0-1 curve (Simple Sine Wave Approximation) 
+
+time_profile = zeros(Hours, 1); 
+
+day_range = 1:365; 
+
+% Pre-calculate the hourly profile 
+
+current_hour = 1; 
+
+for d = day_range 
+
+% Seasonality (Summer=1.0 peak, Winter=0.7 peak) 
+
+season = (1 - cos((d-10)*2*pi/365))/2; 
+
+daily_peak = 0.7 + (0.3 * season);  
+
+day_len = 9 + (6 * season);  
+
+for h = 0:23 
+
+val = daily_peak * cos((pi/day_len)*(h-12)); 
+
+if val < 0, val = 0; end 
+
+time_profile(current_hour) = val; 
+
+current_hour = current_hour + 1; 
+
+end 
+
+end 
+
+% --- 4. CREATE THE MAX OUTPUT MATRIX --- 
+
+Solar_Max_Matrix = time_profile * node_space_limits; 
+
+end 
